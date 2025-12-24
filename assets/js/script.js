@@ -35,18 +35,20 @@ jQuery(document).ready(function ($) {
     });
 
     // Test Connection Logic
+    // Test Connection Logic
     $('#sitemu-test-connection').on('click', function (e) {
         e.preventDefault();
-        var token = $('input[name="sitemu_writer_hf_token"]').val();
-        var model = $('input[name="sitemu_writer_text_model"]').val();
+        var openrouter_token = $('input[name="sitemu_writer_hf_token"]').val();
+        var hf_token = $('input[name="sitemu_writer_huggingface_token"]').val();
+
         var statusDiv = $('#connection-status');
 
-        if (!token) {
-            statusDiv.html('<span style="color:red;">Please enter a token first.</span>');
+        if (!openrouter_token && !hf_token) {
+            statusDiv.html('<span style="color:red;">Please enter at least one token.</span>');
             return;
         }
 
-        statusDiv.html('<span style="color:blue;">Testing connection...</span>');
+        statusDiv.html('<span style="color:blue;">Testing connections...</span>');
 
         $.ajax({
             url: sitemuWriterAjax.ajax_url,
@@ -54,8 +56,8 @@ jQuery(document).ready(function ($) {
             data: {
                 action: 'sitemu_test_connection',
                 nonce: sitemuWriterAjax.nonce,
-                token: token,
-                model: model
+                openrouter_token: openrouter_token,
+                hf_token: hf_token
             },
             success: function (response) {
                 if (response.success) {
@@ -171,7 +173,22 @@ jQuery(document).ready(function ($) {
             }
 
             btn.prop('disabled', true);
-            output.html('<span style="color:blue;">Generating content... this may take a minute.</span>');
+
+            // Loading Animation Steps
+            var steps = [
+                '<span class="dashicons dashicons-update" style="animation: spin 2s infinite linear;"></span> Initiating AI sequences...',
+                '<span class="dashicons dashicons-edit"></span> Generating optimized text content...',
+                '<span class="dashicons dashicons-art"></span> Designing unique featured image...',
+                '<span class="dashicons dashicons-saved"></span> Finalizing and SEO optimization...'
+            ];
+
+            var currentStep = 0;
+            output.html('<div style="padding:10px; background:#fff; border-left:4px solid #2271b1;">' + steps[0] + '</div>');
+
+            var loadingInterval = setInterval(function () {
+                currentStep = (currentStep + 1) % steps.length;
+                output.html('<div style="padding:10px; background:#fff; border-left:4px solid #2271b1;">' + steps[currentStep] + '</div>');
+            }, 5000); // Change message every 5 seconds to simulate progress stages
 
             $.ajax({
                 url: sitemuWriterAjax.ajax_url,
@@ -182,20 +199,23 @@ jQuery(document).ready(function ($) {
                     topic: topic
                 },
                 success: function (response) {
+                    clearInterval(loadingInterval);
                     btn.prop('disabled', false);
                     if (response.success) {
-                        var msg = '<span style="color:green;">' + response.data.message + '</span>';
+                        var msg = '<div style="padding:10px; background:#d4edda; color:#155724; border:1px solid #c3e6cb; border-radius:4px;"><strong>✅ Success!</strong> ' + response.data.message;
                         if (response.data.post_id) {
-                            msg += ' <a href="post.php?post=' + response.data.post_id + '&action=edit" target="_blank">Edit Post</a>';
+                            msg += ' <a href="post.php?post=' + response.data.post_id + '&action=edit" target="_blank" class="button button-small">Edit Post</a> <a href="' + response.data.edit_url.replace('&action=edit', '') + '" target="_blank" class="button button-small">View Post</a>';
                         }
+                        msg += '</div>';
                         output.html(msg);
                     } else {
-                        output.html('<span style="color:red;">Error: ' + response.data.message + '</span>');
+                        output.html('<div style="padding:10px; background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; border-radius:4px;"><strong>❌ Error:</strong> ' + response.data.message + '</div>');
                     }
                 },
                 error: function () {
+                    clearInterval(loadingInterval);
                     btn.prop('disabled', false);
-                    output.html('<span style="color:red;">Ajax Error. Check console/logs.</span>');
+                    output.html('<div style="padding:10px; background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; border-radius:4px;"><strong>❌ Fatal Error:</strong> Ajax Request Failed. Check console logs.</div>');
                 }
             });
         });

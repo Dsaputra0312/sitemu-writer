@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Sitemu Writer
  * Description: Automated AI content writer with Open Router integration.
- * Version: 2.3.0
+ * Version: 2.3.1
  * Author: Sitemu
  * Text Domain: sitemu-writer
  */
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('SITEMU_WRITER_VERSION', '2.3.0');
+define('SITEMU_WRITER_VERSION', '2.3.1');
 define('SITEMU_WRITER_PATH', plugin_dir_path(__FILE__));
 define('SITEMU_WRITER_URL', plugin_dir_url(__FILE__));
 

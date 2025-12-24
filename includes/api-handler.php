@@ -11,36 +11,58 @@ function sitemu_writer_handle_test_connection()
 {
     check_ajax_referer('sitemu_writer_nonce', 'nonce');
 
-    $token = sanitize_text_field($_POST['token']);
-    $model = sanitize_text_field($_POST['model']);
+    $or_token = isset($_POST['openrouter_token']) ? sanitize_text_field($_POST['openrouter_token']) : '';
+    $hf_token = isset($_POST['hf_token']) ? sanitize_text_field($_POST['hf_token']) : ''; // This is actually the Hugging Face token
 
-    if (empty($token)) {
-        wp_send_json_error(array('message' => 'Token is empty.'));
+    $messages = [];
+    $has_error = false;
+
+    // Test OpenRouter
+    if ($or_token) {
+        $response = wp_remote_get("https://openrouter.ai/api/v1/auth/key", array(
+            'headers' => array('Authorization' => 'Bearer ' . $or_token),
+            'timeout' => 10
+        ));
+
+        if (is_wp_error($response)) {
+            $messages[] = "OpenRouter: Error (" . $response->get_error_message() . ").";
+            $has_error = true;
+        } elseif (wp_remote_retrieve_response_code($response) !== 200) {
+            $messages[] = "OpenRouter: Failed (" . wp_remote_retrieve_response_code($response) . ").";
+            $has_error = true;
+        } else {
+            $messages[] = "OpenRouter: Connected.";
+        }
     }
 
-    $api_url = "https://openrouter.ai/api/v1/auth/key";
+    // Test Hugging Face
+    if ($hf_token) {
+        $response = wp_remote_get("https://huggingface.co/api/whoami", array(
+            'headers' => array('Authorization' => 'Bearer ' . $hf_token),
+            'timeout' => 10
+        ));
 
-    $response = wp_remote_get($api_url, array(
-        'headers' => array(
-            'Authorization' => 'Bearer ' . $token,
-        ),
-        'timeout' => 10
-    ));
-
-    if (is_wp_error($response)) {
-        wp_send_json_error(array('message' => $response->get_error_message()));
+        if (is_wp_error($response)) {
+            $messages[] = "HF: Error (" . $response->get_error_message() . ").";
+            $has_error = true;
+        } elseif (wp_remote_retrieve_response_code($response) !== 200) {
+            $messages[] = "HF: Failed (" . wp_remote_retrieve_response_code($response) . ").";
+            $has_error = true;
+        } else {
+            $data = json_decode(wp_remote_retrieve_body($response), true);
+            $user = isset($data['name']) ? $data['name'] : 'Unknown';
+            $messages[] = "HF: Connected as $user.";
+        }
     }
 
-    $code = wp_remote_retrieve_response_code($response);
-    $body = wp_remote_retrieve_body($response);
+    if (empty($messages)) {
+        wp_send_json_error(array('message' => 'No tokens provided.'));
+    }
 
-    if ($code === 200) {
-        wp_send_json_success(array('message' => 'Connected successfully to Open Router!'));
+    if ($has_error) {
+        wp_send_json_error(array('message' => implode(' ', $messages)));
     } else {
-        // Try to parse JSON error from body
-        $json = json_decode($body, true);
-        $msg = isset($json['error']) ? (is_array($json['error']) ? json_encode($json['error']) : $json['error']) : $body;
-        wp_send_json_error(array('message' => 'API Error (' . $code . '): ' . $msg));
+        wp_send_json_success(array('message' => implode(' ', $messages)));
     }
 }
 
@@ -73,13 +95,33 @@ function sitemu_writer_handle_generation()
 
 function sitemu_writer_generate_article_core($manual_topic = '')
 {
-    $token = get_option('sitemu_writer_hf_token');
-    if (empty($token)) {
-        return array('success' => false, 'message' => 'API Token not configured');
+    // 2. Text Generation Settings
+    $text_provider = get_option('sitemu_writer_text_provider', 'openrouter');
+    $model_name = get_option('sitemu_writer_text_model', 'mistralai/Mistral-7B-Instruct-v0.2');
+
+    if ($text_provider === 'huggingface') {
+        $token = get_option('sitemu_writer_huggingface_token');
+        $api_url = "https://router.huggingface.co/v1/chat/completions";
+        $headers = array(
+            'Authorization' => 'Bearer ' . $token,
+            'Content-Type' => 'application/json'
+        );
+    } else {
+        // OpenRouter
+        $token = get_option('sitemu_writer_hf_token'); // Legacy name for OpenRouter token
+        $api_url = "https://openrouter.ai/api/v1/chat/completions";
+        $headers = array(
+            'Authorization' => 'Bearer ' . $token,
+            'Content-Type' => 'application/json',
+            'HTTP-Referer' => get_site_url(),
+            'X-Title' => get_bloginfo('name')
+        );
     }
 
-    // 2. Text Generation Settings (Moved up for language detection)
-    $text_model = get_option('sitemu_writer_text_model', 'mistralai/Mistral-7B-Instruct-v0.2');
+    if (empty($token)) {
+        return array('success' => false, 'message' => 'API Token not configured for ' . $text_provider);
+    }
+
     $lang = get_option('sitemu_writer_language', 'indonesian');
     $tone = get_option('sitemu_writer_tone', 'professional');
     $min_words = get_option('sitemu_writer_min_words', 500);
@@ -231,55 +273,77 @@ function sitemu_writer_generate_article_core($manual_topic = '')
     $prompt .= "Output Format:\n";
     $prompt .= "Provide ONLY the HTML content. Use <h2>, <h3>, <p>, <ul>, <ol>, <li>, <strong> tags. Do NOT use markdown (```html or ```). Do NOT include an H1 tag (the title is already the H1).";
 
-    // Call Text API (Open Router)
-    $api_url = "https://openrouter.ai/api/v1/chat/completions";
+    // Call Text API
     $response = wp_remote_post($api_url, array(
-        'headers' => array(
-            'Authorization' => 'Bearer ' . $token,
-            'Content-Type' => 'application/json',
-            'HTTP-Referer' => get_site_url(), // Recommended by OpenRouter
-            'X-Title' => get_bloginfo('name') // Recommended by OpenRouter
-        ),
+        'headers' => $headers,
         'body' => json_encode(array(
-            'model' => $text_model,
+            'model' => $model_name,
             'messages' => [
                 ['role' => 'user', 'content' => $prompt]
-            ]
+            ],
+            // For HF, parameters might need 'max_tokens' or similar if defaulting to low
         )),
-        'timeout' => 300 // Increase timeout to 5 minutes (Open Router can be slow for long content)
+        'timeout' => 300
     ));
 
     if (is_wp_error($response)) {
+        $error_msg = "Text Gen Error (" . $text_provider . "): " . $response->get_error_message();
         Sitemu_History_DB::add_log(array(
             'topic_id' => $topic_data ? $topic_data->id : null,
             'topic_text' => $topic_text,
+            'keywords_used' => isset($keywords) ? $keywords : null,
+            'angle_used' => isset($angle) ? $angle : null,
             'status' => 'failed',
-            'error_message' => $response->get_error_message()
+            'error_message' => $error_msg
         ));
-        return array('success' => false, 'message' => $response->get_error_message());
+        return array('success' => false, 'message' => $error_msg);
     }
 
     $body = json_decode(wp_remote_retrieve_body($response), true);
     $content = '';
 
-    // Open Router / OpenAI format
+    // Open Router / OpenAI / HF compatible format
     if (isset($body['choices'][0]['message']['content'])) {
         $content = $body['choices'][0]['message']['content'];
     } else {
-        $error_msg = isset($body['error']['message']) ? $body['error']['message'] : (isset($body['error']) ? json_encode($body['error']) : 'Unknown API error');
+        $raw_error = isset($body['error']['message']) ? $body['error']['message'] : (isset($body['error']) ? json_encode($body['error']) : 'Unknown API response');
+        $error_msg = "Text Gen API Error (" . $text_provider . "): " . $raw_error;
+
         Sitemu_History_DB::add_log(array(
             'topic_id' => $topic_data ? $topic_data->id : null,
             'topic_text' => $topic_text,
+            'keywords_used' => isset($keywords) ? $keywords : null,
+            'angle_used' => isset($angle) ? $angle : null,
             'status' => 'failed',
             'error_message' => $error_msg
         ));
-        return array('success' => false, 'message' => "API Error: " . $error_msg);
+        return array('success' => false, 'message' => $error_msg);
     }
 
-    // 3. Featured Image (Default User Selection)
-    $image_id = get_option('sitemu_writer_default_image_id');
-    if (!$image_id) {
-        $image_id = null; // Ensure clear fallbacks if setting is empty
+    // 3. Featured Image Logic
+    $image_id = null;
+    $image_source = get_option('sitemu_writer_image_source', 'default');
+
+    if ($image_source === 'default') {
+        $image_id = get_option('sitemu_writer_default_image_id');
+    } elseif ($image_source === 'ai') {
+        $img_provider = get_option('sitemu_writer_image_provider', 'openrouter');
+        $img_model = get_option('sitemu_writer_image_model', 'stabilityai/stable-diffusion-xl-base-1.0');
+
+        $img_prompt = "Buat thumbnail artikel dengan ukuran 16:9 yang menggambarkan tema utama artikel berdasarkan judulnya yaitu " . $topic_text . ". Desain thumbnail harus menggunakan ilustrasi 2D yang sederhana dan menarik, dengan warna pastel. Pastikan thumbnail tidak lebih dari 200KB dan simpan dalam format .webp. Tambahkan watermark dengan teks 'sitemu.id' di sudut kanan bawah. Gunakan elemen visual yang relevan dengan tema artikel, misalnya gambar terkait topik yang dibahas dalam artikel. Pastikan desainnya bersih dan mudah dipahami, dengan ruang yang cukup untuk teks judul yang jelas terbaca.";
+        // Truncate prompt to safe limit (increased for longer instruction)
+        $img_prompt = substr($img_prompt, 0, 1000);
+
+        if ($img_provider === 'huggingface') {
+            $hf_token = get_option('sitemu_writer_huggingface_token');
+            if ($hf_token) {
+                $image_binary = sitemu_call_hf_inference_image($img_model, $hf_token, $img_prompt);
+                if ($image_binary) {
+                    $image_id = sitemu_upload_image_from_binary($image_binary, $topic_text);
+                }
+            }
+        }
+        // OpenRouter Image Gen implementation would go here (requires specific endpoint support)
     }
 
     // 4. Create Post
@@ -333,4 +397,82 @@ function sitemu_writer_generate_article_core($manual_topic = '')
         'edit_url' => get_edit_post_link($post_id, 'raw'),
         'preview' => wp_trim_words($content, 20)
     );
+}
+
+// Helper Functions for Image Generation
+function sitemu_call_hf_inference_image($model, $token, $prompt)
+{
+    // Updated Endpoint as per user request
+    $api_url = "https://router.huggingface.co/nebius/v1/images/generations";
+
+    // New Payload Structure
+    $payload = array(
+        "response_format" => "b64_json",
+        "prompt" => $prompt,
+        "model" => $model
+    );
+
+    $response = wp_remote_post($api_url, array(
+        'headers' => array(
+            'Authorization' => 'Bearer ' . $token,
+            'Content-Type' => 'application/json',
+        ),
+        'body' => json_encode($payload),
+        'timeout' => 60
+    ));
+
+    if (is_wp_error($response)) {
+        // Optional: log error
+        return false;
+    }
+
+    $code = wp_remote_retrieve_response_code($response);
+    if ($code !== 200) {
+        // Optional: log error body for debugging
+        return false;
+    }
+
+    $body = wp_remote_retrieve_body($response);
+    $json = json_decode($body, true);
+
+    // Parse standard OpenAI-like image response structure with b64_json
+    if (isset($json['data'][0]['b64_json'])) {
+        return base64_decode($json['data'][0]['b64_json']);
+    }
+
+    return false;
+}
+
+function sitemu_upload_image_from_binary($binary_data, $title)
+{
+    if (empty($binary_data))
+        return null;
+
+    $upload_dir = wp_upload_dir();
+    // Sanitize title for filename
+    $filename = sanitize_title($title) . '-' . time() . '.jpg';
+
+    if (wp_mkdir_p($upload_dir['path'])) {
+        $file = $upload_dir['path'] . '/' . $filename;
+    } else {
+        $file = $upload_dir['basedir'] . '/' . $filename;
+    }
+
+    file_put_contents($file, $binary_data);
+
+    $wp_filetype = wp_check_filetype($filename, null);
+
+    $attachment = array(
+        'post_mime_type' => 'image/jpeg', // Force jpeg/png based on expectation, or detect
+        'post_title' => $title,
+        'post_content' => '',
+        'post_status' => 'inherit'
+    );
+
+    $attach_id = wp_insert_attachment($attachment, $file);
+    require_once(ABSPATH . 'wp-admin/includes/image.php');
+    $attach_data = wp_generate_attachment_metadata($attach_id, $file);
+    wp_update_attachment_metadata($attach_id, $attach_data);
+
+    return $attach_id;
 }

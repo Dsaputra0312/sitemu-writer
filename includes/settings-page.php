@@ -7,8 +7,11 @@ if (!defined('ABSPATH')) {
 function sitemu_writer_register_settings()
 {
     // API Group
-    register_setting('sitemu_writer_api_group', 'sitemu_writer_hf_token');
+    register_setting('sitemu_writer_api_group', 'sitemu_writer_hf_token'); // OpenRouter Token
+    register_setting('sitemu_writer_api_group', 'sitemu_writer_huggingface_token'); // HuggingFace Token
+    register_setting('sitemu_writer_api_group', 'sitemu_writer_text_provider');
     register_setting('sitemu_writer_api_group', 'sitemu_writer_text_model');
+    register_setting('sitemu_writer_api_group', 'sitemu_writer_image_provider');
     register_setting('sitemu_writer_api_group', 'sitemu_writer_image_model');
 
     // Article Group
@@ -17,6 +20,7 @@ function sitemu_writer_register_settings()
     register_setting('sitemu_writer_article_group', 'sitemu_writer_min_words');
     register_setting('sitemu_writer_article_group', 'sitemu_writer_max_words');
     register_setting('sitemu_writer_article_group', 'sitemu_writer_post_status');
+    register_setting('sitemu_writer_article_group', 'sitemu_writer_image_source'); // default, ai
     register_setting('sitemu_writer_article_group', 'sitemu_writer_default_image_id'); // New Setting
     register_setting('sitemu_writer_article_group', 'sitemu_writer_enable_yoast');
 
@@ -76,42 +80,95 @@ function sitemu_writer_render_settings_page()
 
 function sitemu_writer_render_api_tab()
 {
+    $text_provider = get_option('sitemu_writer_text_provider', 'openrouter');
+    $image_provider = get_option('sitemu_writer_image_provider', 'openrouter');
     ?>
     <table class="form-table">
+        <!-- API Keys Section -->
         <tr valign="top">
-            <th scope="row">Open Router API Key</th>
+            <th scope="row" colspan="2" style="background: #f0f0f1; padding: 10px;"><strong>API Credentials</strong></th>
+        </tr>
+        <tr valign="top">
+            <th scope="row">OpenRouter API Key</th>
             <td>
                 <input type="password" name="sitemu_writer_hf_token"
                     value="<?php echo esc_attr(get_option('sitemu_writer_hf_token')); ?>" class="regular-text" />
-                <button type="button" id="sitemu-test-connection" class="button button-secondary">Test Connection</button>
-                <div id="connection-status" style="margin-top: 5px;"></div>
                 <p class="description">Enter your API key from <a href="https://openrouter.ai/keys" target="_blank">Open
                         Router</a>.</p>
             </td>
         </tr>
         <tr valign="top">
-            <th scope="row">Text Generation Model</th>
+            <th scope="row">Hugging Face Token</th>
+            <td>
+                <input type="password" name="sitemu_writer_huggingface_token"
+                    value="<?php echo esc_attr(get_option('sitemu_writer_huggingface_token')); ?>" class="regular-text" />
+                <p class="description">Enter your Access Token from <a href="https://huggingface.co/settings/tokens"
+                        target="_blank">Hugging Face</a> (Read permission).</p>
+            </td>
+        </tr>
+        <tr valign="top">
+            <td colspan="2">
+                <button type="button" id="sitemu-test-connection" class="button button-secondary">Test Connections</button>
+                <div id="connection-status" style="margin-top: 5px;"></div>
+            </td>
+        </tr>
+
+        <!-- Text Generation Section -->
+        <tr valign="top">
+            <th scope="row" colspan="2" style="background: #f0f0f1; padding: 10px;"><strong>Text Generation
+                    Settings</strong></th>
+        </tr>
+        <tr valign="top">
+            <th scope="row">AI Provider</th>
+            <td>
+                <select name="sitemu_writer_text_provider">
+                    <option value="openrouter" <?php selected($text_provider, 'openrouter'); ?>>OpenRouter</option>
+                    <option value="huggingface" <?php selected($text_provider, 'huggingface'); ?>>Hugging Face</option>
+                </select>
+            </td>
+        </tr>
+        <tr valign="top">
+            <th scope="row">Model Name</th>
             <td>
                 <input type="text" name="sitemu_writer_text_model"
                     value="<?php echo esc_attr(get_option('sitemu_writer_text_model', 'mistralai/mistral-7b-instruct:free')); ?>"
                     class="regular-text" />
-                <p class="description">Recommended: <code>mistralai/mistral-7b-instruct:free</code>,
-                    <code>google/gemma-7b-it:free</code>, <code>meta-llama/llama-3-8b-instruct:free</code>
+                <p class="description">
+                    <strong>OpenRouter Example:</strong> <code>mistralai/mistral-7b-instruct:free</code><br>
+                    <strong>Hugging Face Example:</strong> <code>deepseek-ai/DeepSeek-V3.2:novita</code> or
+                    <code>meta-llama/Llama-2-7b-chat-hf</code>
                 </p>
             </td>
         </tr>
-        <!--
+
+        <!-- Image Generation Section -->
         <tr valign="top">
-            <th scope="row">Image Generation Model</th>
+            <th scope="row" colspan="2" style="background: #f0f0f1; padding: 10px;"><strong>Image Generation
+                    Settings</strong></th>
+        </tr>
+        <tr valign="top">
+            <th scope="row">AI Provider</th>
+            <td>
+                <select name="sitemu_writer_image_provider">
+                    <option value="openrouter" <?php selected($image_provider, 'openrouter'); ?>>OpenRouter (Not all models
+                        support images)</option>
+                    <option value="huggingface" <?php selected($image_provider, 'huggingface'); ?>>Hugging Face</option>
+                </select>
+            </td>
+        </tr>
+        <tr valign="top">
+            <th scope="row">Model Name</th>
             <td>
                 <input type="text" name="sitemu_writer_image_model"
                     value="<?php echo esc_attr(get_option('sitemu_writer_image_model', 'stabilityai/stable-diffusion-xl-base-1.0')); ?>"
                     class="regular-text" />
-                <p class="description">Recommended: <code>stabilityai/stable-diffusion-xl-base-1.0</code>,
-                    <code>black-forest-labs/FLUX.1-schnell</code></p>
+                <p class="description">
+                    <strong>Hugging Face Example:</strong> <code>stabilityai/stable-diffusion-xl-base-1.0</code>,
+                    <code>black-forest-labs/FLUX.1-schnell</code><br>
+                    <strong>OpenRouter Example:</strong> (Check OpenRouter docs for image models)
+                </p>
             </td>
         </tr>
-        -->
     </table>
     <?php
 }
@@ -168,6 +225,17 @@ function sitemu_writer_render_article_tab()
             </td>
         </tr>
         <tr valign="top">
+            <th scope="row">Featured Image Source</th>
+            <td>
+                <select name="sitemu_writer_image_source" id="sitemu_writer_image_source">
+                    <option value="default" <?php selected(get_option('sitemu_writer_image_source'), 'default'); ?>>Default
+                        Image (Static)</option>
+                    <option value="ai" <?php selected(get_option('sitemu_writer_image_source'), 'ai'); ?>>AI Generated
+                    </option>
+                </select>
+            </td>
+        </tr>
+        <tr valign="top" id="sitemu-default-image-row">
             <th scope="row">Default Featured Image</th>
             <td>
                 <?php
@@ -194,6 +262,19 @@ function sitemu_writer_render_article_tab()
                 </label>
             </td>
         </tr>
+        <script>
+            jQuery(document).ready(function ($) {
+                function toggleImageSource() {
+                    if ($('#sitemu_writer_image_source').val() === 'default') {
+                        $('#sitemu-default-image-row').show();
+                    } else {
+                        $('#sitemu-default-image-row').hide();
+                    }
+                }
+                $('#sitemu_writer_image_source').change(toggleImageSource);
+                toggleImageSource();
+            });
+        </script>
 
     </table>
     <?php
